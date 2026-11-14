@@ -1,0 +1,13 @@
+# 本地原始记录，不随仓库发布
+minecraft_ced.md
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# 编辑器
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
