@@ -1,0 +1,18 @@
+{
+  "checkedAt": "2026-11-14",
+  "scope": [
+    "models.sanitized.json"
+  ],
+  "providerCount": 3,
+  "modelCount": 17,
+  "checks": {
+    "allowlistedModelPluginsOnly": true,
+    "credentialFieldsRemoved": true,
+    "credentialEnvironmentNamesOnly": true,
+    "urlUserinfoQueryFragmentRemoved": true,
+    "knownLocalCredentialExactMatch": "PASS",
+    "commonCredentialPatterns": "PASS"
+  },
+  "removedOrReplacedFieldCount": 0,
+  "limitations": "Automated checks are not a mathematical guarantee; unknown secret formats may require manual review. Original configs and credential stores are not included."
+}

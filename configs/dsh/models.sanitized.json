@@ -1,0 +1,269 @@
+{
+  "schema": "dsh-model-settings-sanitized-v1",
+  "exportedAt": "2026-11-14",
+  "sourceProfile": "desktop",
+  "notice": "Sanitized model-related plugin settings only; no credentials. Not a full Cordis profile.",
+  "plugins": [
+    {
+      "name": "@deepseek-ai/dsh-session-title-first-prompt-llm",
+      "config": {
+        "targetWords": 5,
+        "targetCjkCharacters": 10,
+        "maxInputBytes": 4096,
+        "maxOutputTokens": 64,
+        "timeoutMs": 60000
+      }
+    },
+    {
+      "name": "@deepseek-ai/dsh-agent-default-model",
+      "config": {
+        "provider": "poke2api",
+        "model": "gpt-6.1-sol"
+      }
+    },
+    {
+      "name": "@deepseek-ai/dsh-llm-pi-ai",
+      "config": {
+        "providers": {
+          "poke2api": {
+            "displayName": "Poke API",
+            "apiKeyEnv": "POKE2API_API_KEY",
+            "api": "openai-completions",
+            "baseURL": "https://www.poke2api.com/v1",
+            "models": [
+              {
+                "id": "deepseek-v4.1-flash",
+                "name": "deepseek-v4.1-flash",
+                "contextWindow": 1000000,
+                "maxTokens": 128000,
+                "input": [
+                  "text",
+                  "image"
+                ]
+              },
+              {
+                "id": "gpt-5.6-terra",
+                "name": "gpt-5.6-terra",
+                "contextWindow": 256000,
+                "maxTokens": 32000,
+                "input": [
+                  "text",
+                  "image"
+                ]
+              },
+              {
+                "id": "gpt-6.1-sol",
+                "name": "gpt-6.1-sol",
+                "contextWindow": 512000,
+                "maxTokens": 64000,
+                "input": [
+                  "text",
+                  "image"
+                ]
+              },
+              {
+                "id": "gpt-6-astra",
+                "name": "gpt-6-astra",
+                "contextWindow": 512000,
+                "maxTokens": 64000,
+                "input": [
+                  "text",
+                  "image"
+                ]
+              },
+              {
+                "id": "glm-5.3",
+                "name": "glm-5.3",
+                "contextWindow": 1000000,
+                "maxTokens": 128000,
+                "input": [
+                  "text",
+                  "image"
+                ]
+              },
+              {
+                "id": "glm-5.3-flash",
+                "name": "glm-5.3-flash",
+                "contextWindow": 512000,
+                "maxTokens": 64000,
+                "input": [
+                  "text",
+                  "image"
+                ]
+              },
+              {
+                "id": "kimi-k3",
+                "name": "kimi-k3",
+                "contextWindow": 1000000,
+                "maxTokens": 128000,
+                "input": [
+                  "text",
+                  "image"
+                ]
+              },
+              {
+                "id": "claude-sonnet-5-5",
+                "name": "claude-sonnet-5-5",
+                "contextWindow": 512000,
+                "maxTokens": 64000,
+                "input": [
+                  "text",
+                  "image"
+                ]
+              },
+              {
+                "id": "claude-opus-5-5",
+                "name": "claude-opus-5-5",
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "contextWindow": 1000000,
+                "maxTokens": 128000
+              },
+              {
+                "id": "grok-4.7",
+                "name": "grok-4.7"
+              }
+            ]
+          },
+          "gemini-aistudio": {
+            "displayName": "Google AI Studio",
+            "apiKeyEnv": "GEMINI_AISTUDIO_API_KEY",
+            "api": "openai-completions",
+            "baseURL": "https://generativelanguage.googleapis.com/v1beta/openai",
+            "models": [
+              {
+                "id": "gemini-3.8-flash",
+                "name": "gemini-3.8-flash",
+                "contextWindow": 1048576,
+                "maxTokens": 65536,
+                "input": [
+                  "text",
+                  "image"
+                ]
+              },
+              {
+                "id": "gemini-3.5-flash",
+                "name": "gemini-3.5-flash",
+                "contextWindow": 1048576,
+                "maxTokens": 65536,
+                "input": [
+                  "text",
+                  "image"
+                ]
+              },
+              {
+                "id": "gemini-4-hydrogen",
+                "name": "gemini-4-hydrogen",
+                "contextWindow": 256000,
+                "maxTokens": 65536,
+                "input": [
+                  "text",
+                  "image"
+                ]
+              },
+              {
+                "name": "gemini-4-argon",
+                "contextWindow": 256000,
+                "maxTokens": 65536,
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "id": "gemini-4-argon"
+              },
+              {
+                "id": "gemini-pro-latest",
+                "name": "gemini-pro-latest",
+                "contextWindow": 1048576,
+                "maxTokens": 65536,
+                "input": [
+                  "text",
+                  "image"
+                ]
+              }
+            ]
+          },
+          "deepseek-api": {
+            "displayName": "DeepSeek (API Key)",
+            "apiKeyEnv": "DEEPSEEK_API_KEY",
+            "api": "openai-completions",
+            "baseURL": "https://api.deepseek.com/v1",
+            "models": [
+              {
+                "id": "deepseek-flash",
+                "name": "DeepSeek-V4.1-Flash",
+                "contextWindow": 1048576,
+                "maxTokens": 393216,
+                "input": [
+                  "text",
+                  "image"
+                ]
+              },
+              {
+                "id": "deepseek-v4-pro",
+                "name": "DeepSeek-V4-Pro",
+                "contextWindow": 1048576,
+                "maxTokens": 393216,
+                "input": [
+                  "text"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "@deepseek-ai/dsh-llm-deepseek-api-key",
+      "config": {
+        "models": []
+      }
+    },
+    {
+      "name": "@deepseek-ai/dsh-tool-subagent/model-selection-settings",
+      "config": {
+        "enabled": true,
+        "allowedModels": [
+          {
+            "provider": "deepseek-account",
+            "model": "deepseek-flash"
+          },
+          {
+            "provider": "antigravity",
+            "model": "gemini-3.8-flash"
+          },
+          {
+            "provider": "antigravity",
+            "model": "claude-sonnet-4-6"
+          },
+          {
+            "provider": "antigravity",
+            "model": "claude-opus-4-6-thinking"
+          },
+          {
+            "provider": "poke2api",
+            "model": "claude-opus-5-5"
+          },
+          {
+            "provider": "poke2api",
+            "model": "claude-sonnet-5-5"
+          },
+          {
+            "provider": "gemini-aistudio",
+            "model": "gemini-3.8-flash"
+          },
+          {
+            "provider": "gemini-aistudio",
+            "model": "gemini-3.5-flash"
+          },
+          {
+            "provider": "deepseek-api",
+            "model": "deepseek-flash"
+          }
+        ]
+      }
+    }
+  ]
+}
