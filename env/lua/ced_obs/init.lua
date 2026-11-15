@@ -1,0 +1,210 @@
+-- ced_obs: 结构化观测导出（Luanti / Craftium 分支用）
+--
+-- 由仓库根目录的 ced_obs.lua 派生，差异只在"怎么找玩家/写到哪里/数值格式"：
+--   * 玩家改为 get_connected_players()[1]（Craftium 的 agent 是唯一的真实连接玩家）
+--   * 写到 core.get_worldpath()/ced_obs.txt（每个环境有独立 run_dir，不会串线）
+--   * 每个数值按 %.4f 格式化后拼接 —— 默认数字转字符串最多 14 位有效数字，
+--     2568 个数会让一帧从 18 KB 涨到 36 KB
+--   * dist_h 改为真正的水平距离（原参考实现把三维距离填了进去）
+-- schema 的维度、偏移量、帧头格式与 docs/protocol.md 完全一致，未做任何改动。
+--
+-- 每 tick 一次文件写 + rename，原子替换，Python 侧不会读到半写文件。
+
+local RAY_GRID = 16
+local RAY_DIM = 9
+local SELF_DIM = 48
+local N_ENT = 16
+local ENT_DIM = 12
+local N_AUDIO = 4
+local AUDIO_DIM = 3
+local TASK_DIM = 12
+local OBS_DIM = RAY_GRID * RAY_GRID * RAY_DIM + SELF_DIM
+             + N_ENT * ENT_DIM + N_AUDIO * AUDIO_DIM + TASK_DIM
+
+local FOV_HALF = math.rad(35)
+local MAX_DIST = 32
+
+-- 方块类：先用显式表 + 名字哈希兜底，正式版换模糊聚类
+local CLASS = {
+    air = 0, cave_air = 0,
+    ["default:stone"] = 1, ["default:cobble"] = 1, ["default:gravel"] = 1,
+    ["default:dirt"] = 2, ["default:dirt_with_grass"] = 3,
+    ["default:sand"] = 4, ["default:tree"] = 5, ["default:leaves"] = 6,
+    ["default:water_source"] = 7, ["default:lava_source"] = 8,
+    ["default:glass"] = 9, ["default:stone_with_iron"] = 10,
+    ["default:stone_with_coal"] = 11, ["default:chest"] = 12,
+}
+
+local class_of_cache = {}
+
+local function hash(s)
+    local h = 5381
+    for i = 1, #s do h = (h * 33 + s:byte(i)) % 2147483647 end
+    return h
+end
+
+local function class_of(name)
+    local hit = class_of_cache[name]
+    if hit ~= nil then return hit end
+    local c = CLASS[name] or (1 + (hash(name) % 190))
+    class_of_cache[name] = c
+    return c
+end
+
+-- 形状类：0 全方块 1 半砖 2 楼梯 3 栅栏 4 玻璃 5 植物 6 流体 7 其他
+local function shape_of(name)
+    if name:find("slab") then return 1 end
+    if name:find("stair") then return 2 end
+    if name:find("fence") or name:find("wall") then return 3 end
+    if name:find("glass") then return 4 end
+    if name:find("flower") or name:find("grass") or name:find("sapling") then return 5 end
+    if name:find("water") or name:find("lava") then return 6 end
+    return 0
+end
+
+local function normalize(v)
+    local l = math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
+    if l < 1e-6 then return {x = 0, y = 0, z = 0} end
+    return {x = v.x / l, y = v.y / l, z = v.z / l}
+end
+
+local function cross(a, b)
+    return {x = a.y * b.z - a.z * b.y, y = a.z * b.x - a.x * b.z, z = a.x * b.y - a.y * b.x}
+end
+
+local function ray_block(player, dir, eyewear)
+    local pos = player:get_pos()
+    pos.y = pos.y + eyewear
+    local target = {x = pos.x + dir.x * MAX_DIST,
+                    y = pos.y + dir.y * MAX_DIST,
+                    z = pos.z + dir.z * MAX_DIST}
+    for pt in core.raycast(pos, target, false, true) do
+        if pt.type == "node" then
+            local node = core.get_node_or_nil(pt.under)
+            if not node then return 0, 0, 0, 0, 0, 0, 0, 0 end
+            local def = core.registered_nodes[node.name]
+            -- 可穿过的（空气、花草）不终止射线；实心方块与流体终止
+            local pass_through = def and def.walkable == false
+                                 and (def.liquidtype == nil or def.liquidtype == "none")
+            if not pass_through then
+                local ip = pt.intersection_point
+                local n = pt.intersection_normal
+                local dx, dy_, dz = ip.x - pos.x, ip.y - pos.y, ip.z - pos.z
+                local dist = math.sqrt(dx * dx + dy_ * dy_ + dz * dz)
+                local dist_h = math.sqrt(dx * dx + dz * dz)
+                local light = (core.get_node_light(pt.under) or 0) / 15
+                return class_of(node.name), n.x, n.y, n.z, dist, dy_, dist_h, light,
+                       shape_of(node.name)
+            end
+        end
+    end
+    return 0, 0, 0, 0, 0, 0, 0, 0, 0
+end
+
+local function build_obs(player)
+    local out = {}
+    for i = 1, OBS_DIM do out[i] = 0 end
+
+    local look = player:get_look_dir()
+    local up = {x = 0, y = 1, z = 0}
+    local right = normalize(cross(look, up))
+    local cam_up = cross(right, look)
+    local eyewear = 1.5
+
+    local idx = 1
+    for v = 0, RAY_GRID - 1 do
+        for u = 0, RAY_GRID - 1 do
+            local su = (u + 0.5) / RAY_GRID * 2 - 1
+            local sv = 1 - (v + 0.5) / RAY_GRID * 2
+            local tx, ty = math.tan(FOV_HALF) * su, math.tan(FOV_HALF) * sv
+            local dir = normalize({
+                x = look.x + tx * right.x + ty * cam_up.x,
+                y = look.y + tx * right.y + ty * cam_up.y,
+                z = look.z + tx * right.z + ty * cam_up.z,
+            })
+            local c, nx, ny, nz, d, dy_, dh, light, shape = ray_block(player, dir, eyewear)
+            out[idx + 0] = c
+            out[idx + 1] = nx
+            out[idx + 2] = ny
+            out[idx + 3] = nz
+            out[idx + 4] = math.min(d, MAX_DIST) / MAX_DIST
+            out[idx + 5] = math.max(-1, math.min(1, dy_ / MAX_DIST))
+            out[idx + 6] = math.min(dh, MAX_DIST) / MAX_DIST
+            out[idx + 7] = light
+            out[idx + 8] = shape
+            idx = idx + 9
+        end
+    end
+
+    -- self 段（48）
+    local p = player:get_pos()
+    local yaw = player:get_look_horizontal()
+    local pitch = player:get_look_vertical()
+    out[idx + 0] = p.x / 32
+    out[idx + 1] = p.y / 32
+    out[idx + 2] = p.z / 32
+    out[idx + 3] = math.sin(yaw)
+    out[idx + 4] = math.cos(yaw)
+    out[idx + 5] = math.sin(pitch)
+    out[idx + 6] = math.cos(pitch)
+    out[idx + 10] = 1                          -- TODO: 真实 on_ground
+    out[idx + 13] = 1                          -- TODO: health/20
+    out[idx + 14] = 1                          -- TODO: hunger/20
+    out[idx + 17] = 1                          -- TODO: 眼位光照/15
+    -- ents / audio / task 段留 0，由任务脚本填（见 TODO）
+    return out
+end
+
+-- 帧格式见 docs/protocol.md：第一行 7 个字段，第二行 OBS_DIM 个数值
+local SCHEMA = "obs-v0.1"
+local TICK = 0
+local EPISODE = 0
+local REWARD, TERM, TRUNC = 0, 0, 0
+
+-- 任务脚本通过这些函数写奖励与终止；不要在 Python 侧重算
+function ced_obs_set_reward(r) REWARD = r end
+function ced_obs_set_termination() TERM = 1 end
+function ced_obs_set_truncation() TRUNC = 1 end
+function ced_obs_new_episode() EPISODE = EPISODE + 1; REWARD, TERM, TRUNC = 0, 0, 0 end
+
+local function write_obs(path, values)
+    local parts = {}
+    for i = 1, #values do parts[i] = string.format("%.4f", values[i]) end
+    local head = string.format("%s %d %d %d %.6f %d %d",
+        SCHEMA, TICK, EPISODE, OBS_DIM, REWARD, TERM, TRUNC)
+    local tmp = path .. ".tmp"
+    local f = io.open(tmp, "w")
+    if not f then return end
+    f:write(head .. "\n" .. table.concat(parts, " ") .. "\n")
+    f:close()
+    os.rename(tmp, path)                       -- 原子替换，Python 不会读到半写文件
+end
+
+local TICK_BUDGET_MS = 0
+local TICK_MAX_MS = 0
+
+core.register_globalstep(function(_)
+    local player = core.get_connected_players()[1]
+    if not player then return end
+    local t0 = core.get_us_time()
+    TICK = TICK + 1
+    local path = core.get_worldpath() .. "/ced_obs.txt"
+    write_obs(path, build_obs(player))
+    local dt = (core.get_us_time() - t0) / 1000
+    TICK_BUDGET_MS = TICK_BUDGET_MS * 0.98 + dt * 0.02
+    if dt > TICK_MAX_MS then TICK_MAX_MS = dt end
+    if TICK % 200 == 0 then
+        -- 每 200 tick 写一次，用来判断射线是否拖慢 tick（EXECUTION S7 的 5ms 门禁）
+        local sf = io.open(core.get_worldpath() .. "/ced_obs_stats.txt", "w")
+        if sf then
+            sf:write(string.format("tick %d avg_ms %.3f max_ms %.3f\n",
+                                   TICK, TICK_BUDGET_MS, TICK_MAX_MS))
+            sf:close()
+        end
+    end
+end)
+
+-- TODO(day-6 之后)：动作通道。Lua 每 tick 读 act.txt 的 `<tick> <14 ints>`，
+-- 用 core.set_player_controls 之类的接口施加，并在应用后记录 last_applied。
+-- 接口约定见 docs/protocol.md；Craftium 目前的动作从它自己的通道进来，
+-- 两条路不能同时生效，切换时要显式禁用 Craftium 的控制。
