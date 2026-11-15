@@ -108,6 +108,8 @@ def main() -> int:
     )
     if args.window:
         env_kwargs["render_mode"] = "human"
+        # 不给位置时窗口管理器会把窗口放到屏幕外（实测落在 +2200+1154）
+        os.environ.setdefault("SDL_VIDEO_WINDOW_POS", "150,150")
     env = craftium_env.CraftiumCedEnv(seed=0, **env_kwargs)
 
     val_seeds = [8 + 10 * i for i in range(args.eval_episodes)]
