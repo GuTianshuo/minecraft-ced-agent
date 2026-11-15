@@ -187,7 +187,7 @@ class CraftiumCedEnv:
             reward += float(r)
             frames += 1
             tick = self._server_tick()
-            if tick > start_tick or frames >= self.max_frames_per_decision or term or trunc:
+            if tick > start_tick or frames >= self.max_frames_per_decision:
                 break
 
         if tick > start_tick and hold and not (term or trunc):
@@ -217,10 +217,12 @@ class CraftiumCedEnv:
             "yaw": yaw,
             "pitch": pitch,
         }
-        # 奖励与终止以 ced_obs 帧为准（任务在 Lua 侧算），Craftium 自带的那套只用来
-        # 提前结束（例如玩家死亡）。
+        # 奖励与终止只认 ced_obs 帧（我们自己的任务）。
+        # 不能把 Craftium 自带的终止位也算进来：room 环境自带的 mod 在玩家靠近它的
+        # 珊瑚方块 2.24 格时就置终止，会把"路过装饰方块"误判成成功（实测有 4.9 格外的
+        # "REACHED"）。死亡与超时由任务侧另行处理。
         return (frame.obs.copy(), frame.reward,
-                bool(frame.terminated or term), bool(frame.truncated or trunc), info)
+                bool(frame.terminated), bool(frame.truncated), info)
 
     def close(self):
         self.craftium.close()
