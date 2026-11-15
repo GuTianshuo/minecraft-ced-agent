@@ -17,7 +17,7 @@
 | CPU | 12th Gen Intel(R) Core(TM) i5-12600K，16 线程 |
 | GPU | NVIDIA GeForce RTX 4070 Ti SUPER，16376 MiB，驱动 595.99.02，最大 SM 时钟 3135 MHz |
 | 内存 | 45 GiB 总量，运行时可用 39 GiB |
-| 磁盘 | `/dev/nvme2n1p3`（SK hynix HFS002TEJ9X115N，1.9T NVMe）挂载 `/`，252G 中已用 184G，**剩 57G** |
+| 磁盘 | `/dev/nvme2n1p3`（SK hynix HFS002TEJ9X115N，1.9T NVMe）挂载 `/`，252G 中已用 105G，**剩 135G**（清理后，见下方第 4 条） |
 
 软件栈：Ubuntu 26.04.1 LTS，Python 3.13.13，torch 2.14.1+cu126（CUDA 12.6，cuDNN 9.10.2），
 numpy 2.5.4，venv 在仓库根 `.venv/`。
@@ -72,8 +72,12 @@ CED/Transformer 耗时比 1.59。CED 的评测走 14 次解码器前向的朴素
    门禁仍然测"训练期间是否持续增长"；三档在第 10 步之后 + 评测的增长为 66/55/2 MB（诊断时测得）。
 3. **`evalx.make_env` 改为位置参数调用**（提交 `713d923`）。`tests/test_pipeline.py` 与
    `bc.py` 两处调用方都只接受一个位置参数，原关键字调用必然 TypeError。未改任何测试。
-4. **磁盘余量 57G，低于 EXECUTION 期望的 100G**。`configs/base.yaml` 的 80 GB 数据配额
-   在当前分区不可能满足。P1 采大批数据前必须先解决（换分区或降低配额），本阶段不受影响。
+4. **磁盘：清理后剩 135G**。清理前只剩 57G，低于 EXECUTION 期望的 100G，
+   `configs/base.yaml` 的 80 GB 数据配额不可行。清理内容（2026-11-15，约 79G）：
+   pip / codex-runtimes / puppeteer / npm 缓存约 7G；`本地模型外网API-260918/models` 下
+   四份 Qwen 大模型（35B 三个量化 + 27B 一个）约 50G；`Downloads` 里一份 13G gguf 与
+   约 0.8G 的 .deb；modelscope 缓存 8.6G。保留 Gemma-4-E4B（llama 服务当前配置）、
+   MiniCPM5、Spark-X2.5 与 miniconda 的两个环境。现在 80 GB 配额可以满足。
 5. **llama-local 服务已停并禁用开机自启**（`systemctl --user disable --now llama-local.service`），
    显存占用从 7407 MiB 降到 1966 MiB。恢复：`systemctl --user enable --now llama-local.service`。
 6. **未进入 S5**（Craftium 安装），等确认。
