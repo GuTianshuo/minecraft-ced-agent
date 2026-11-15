@@ -127,6 +127,7 @@ class CraftiumCedEnv:
         self.channel = transport.ObsChannel(self.obs_path, timeout=frame_timeout)
         self.max_frames_per_decision = max_frames_per_decision
         self.last_frame = None
+        self.last_pixels = None
         self.logical_tick = 0
         self.episode_id = 0
         self.server_tick_offset = 0
@@ -153,7 +154,7 @@ class CraftiumCedEnv:
 
     # ---- 公共接口
     def reset(self, seed: int | None = None):
-        self.craftium.reset(seed=seed)          # 硬重置：服务端进程重启，tick 归零
+        self.last_pixels, _ = self.craftium.reset(seed=seed)   # 硬重置：服务端进程重启，tick 归零
         frame = self.channel.read(after_tick=-1)
         self.episode_id += 1
         self.server_tick_offset = self.logical_tick + 1 - frame.tick
@@ -178,7 +179,8 @@ class CraftiumCedEnv:
         term = trunc = False
 
         while True:
-            _, r, term, trunc, _ = self.craftium.step(action)
+            pixels, r, term, trunc, _ = self.craftium.step(action)
+            self.last_pixels = pixels
             reward += float(r)
             frames += 1
             tick = self._server_tick()
@@ -187,7 +189,8 @@ class CraftiumCedEnv:
 
         if tick > start_tick and hold and not (term or trunc):
             for _ in range(hold):
-                _, r, term, trunc, _ = self.craftium.step(action)
+                pixels, r, term, trunc, _ = self.craftium.step(action)
+                self.last_pixels = pixels
                 reward += float(r)
                 frames += 1
                 if term or trunc:

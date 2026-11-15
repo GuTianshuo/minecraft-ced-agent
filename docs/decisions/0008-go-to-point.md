@@ -75,15 +75,28 @@ GRU 2.04M，4000 步约 2 分钟（RTX 4070 Ti SUPER）。成功率 2/3 之后�
 ## 旁观训练
 
 ```
-python scripts/watch_train.py --steps 12000 --eval-every 1000 --eval-episodes 3 \
-    --max-decisions 400 --pmul 1 --window
+python scripts/watch_train.py --steps 8000 --eval-every 800 --eval-episodes 2 \
+    --max-decisions 300 --pmul 1 --window
 ```
 
-- 训练在后台跑；每到 `--eval-every` 就用**当前模型**在真引擎里跑一遍评测，
-  窗口里是 agent 的第一视角（Craftium `render_mode="human"`，64×64 放大到 720×720）。
-- 窗口标题实时显示 `step / loss / success / 当前 episode / decision / 距目标`。
+- 训练在前台/后台跑；每到 `--eval-every` 就用**当前模型**在真引擎里跑一遍评测，
+  把每个决策的画面记下来，然后在窗口里按 ~50 fps 回放（窗口标题显示 step/loss/success、
+  当前 episode、决策数、距目标）。
 - 终端同步打印每次评测的一行汇总。
-- 评测因渲染被限制在 30 fps，所以看起来是实时的；训练本身不受影响。
+
+**为什么是回放而不是 `render_mode="human"`**：Craftium 的 human 模式每帧都渲染，
+而 Luanti 的物理时间步跟着真实时间走。帧率被渲染拉到 30–60 fps 后，一个客户端帧就是
+16–33 ms 的物理时间，agent 每步走出的距离变成训练时（5 ms/帧）的 3–6 倍。实测：
+
+| 模式 | 教师到达所用决策 |
+| --- | --- |
+| 无渲染 | 192 |
+| `render_mode="human"`（默认 30 fps） | 499 个决策仍未到，终点 4.27 格 |
+| human + `metadata["render_fps"]=200` | 499 个决策仍未到，终点 1.99 格 |
+
+即使把渲染时钟提到 200，渲染本身的开销仍会拉长每帧的时间步。所以评测一律无渲染，
+窗口只负责回放已记录的帧——物理与训练完全一致，看到的行为才是模型真实的行为。
+
 
 ## 还没做的
 

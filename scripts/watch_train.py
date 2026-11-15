@@ -1,13 +1,13 @@
-"""边训练边看：BC 训练 + 定期在窗口里用当前模型跑评测。
+"""边训练边看：BC 训练 + 定期在真环境评测 + 窗口回放。
 
 跑法：
-  python scripts/watch_train.py --data data_room --model gru --steps 3000 --eval-every 500
+  python scripts/watch_train.py --data data_room --model gru --steps 8000 \
+      --eval-every 800 --eval-episodes 2 --pmul 1 --window
 
-窗口里是 agent 的第一视角（Craftium 的 render_mode="human"），标题栏实时显示
-step / loss / 成功率。终端同时打印同样的数字。
-
-训练本身不占窗口；窗口只在评测时打开，看到的是"当前模型在真环境里怎么走"，
-这是判断它有没有学到东西最直接的方式。
+为什么是回放而不是 render_mode="human"：Craftium 的 human 模式会渲染每一帧，
+物理时间步跟着真实时间走，帧率被拉到 30–60 fps 后玩家每步走出的距离变成训练时的
+数倍。实测教师在有窗口时 499 个决策都到不了目标，无窗口 192 个就到。
+所以评测保持无渲染（与训练完全一致），把每决策的画面记下来，训练间隙在窗口里回放。
 """
 
 import argparse
@@ -29,11 +29,41 @@ from schema_v0 import OFF_TASK  # noqa: E402
 
 WINDOW = 16
 MAX_CTX = 32
+WINDOW_SIZE = (640, 640)
 
 
-def evaluate(model, env, seeds, max_decisions, caption=None):
+class Replay:
+    """用一个 pygame 窗口回放评测帧。"""
+
+    def __init__(self):
+        os.environ.setdefault("SDL_VIDEO_WINDOW_POS", "150,150")
+        import pygame
+        self.pygame = pygame
+        pygame.init()
+        self.screen = pygame.display.set_mode(WINDOW_SIZE)
+        self.clock = pygame.time.Clock()
+        pygame.display.set_caption("ced trainer — 等待第一次评测")
+
+    def play(self, frames, title, fps=50):
+        pg = self.pygame
+        for px, cap in frames:
+            for e in pg.event.get():
+                if e.type == pg.QUIT:
+                    return
+            surf = pg.image.frombuffer(px.tobytes(), (px.shape[1], px.shape[0]), "RGB")
+            self.screen.blit(pg.transform.scale(surf, WINDOW_SIZE), (0, 0))
+            pg.display.set_caption(f"{title} | {cap}")
+            pg.display.flip()
+            self.clock.tick(fps)
+        pg.display.set_caption(f"{title} | 训练中…")
+
+    def close(self):
+        self.pygame.quit()
+
+
+def evaluate(model, env, seeds, max_decisions, record=False):
     model.eval()
-    rows = []
+    rows, frames = [], []
     for seed in seeds:
         obs = env.reset(seed=seed)
         buf = [obs]
@@ -42,24 +72,16 @@ def evaluate(model, env, seeds, max_decisions, caption=None):
             act = policy_actions(model, np.stack(buf[-MAX_CTX:]))
             obs, reward, term, trunc, info = env.step(act)
             buf.append(obs)
+            if record and env.last_pixels is not None:
+                d = math.hypot(obs[OFF_TASK + 1], obs[OFF_TASK + 2]) * 32
+                frames.append((env.last_pixels, f"ep {seed} decision {dec} dist {d:.1f}"))
             if term or trunc:
                 success = bool(term)
                 break
-            if caption is not None:
-                _set_caption(f"{caption} | episode {seed} | decision {dec} | "
-                             f"dist {math.hypot(obs[OFF_TASK+1], obs[OFF_TASK+2])*32:.1f}")
         dist = math.hypot(obs[OFF_TASK + 1], obs[OFF_TASK + 2]) * 32
         rows.append((success, dec, dist))
     model.train()
-    return rows
-
-
-def _set_caption(text):
-    try:
-        import pygame
-        pygame.display.set_caption(text)
-    except Exception:
-        pass
+    return rows, frames
 
 
 def main() -> int:
@@ -76,8 +98,8 @@ def main() -> int:
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--eval-every", type=int, default=500)
     ap.add_argument("--eval-episodes", type=int, default=2)
-    ap.add_argument("--max-decisions", type=int, default=120)
-    ap.add_argument("--window", action="store_true", help="开窗口看评测")
+    ap.add_argument("--max-decisions", type=int, default=300)
+    ap.add_argument("--window", action="store_true", help="开窗口回放评测")
     ap.add_argument("--out", default="")
     args = ap.parse_args()
 
@@ -86,12 +108,10 @@ def main() -> int:
 
     store = shards.EpisodeStore(args.data, args.task)
     splits = store.splits()
-    counts = {k: len(v) for k, v in splits.items()}
-    print(f"episodes {counts}")
+    print(f"episodes {{'train': {len(splits['train'])}, 'val': {len(splits['val'])}, "
+          f"'test': {len(splits['test'])}}}", flush=True)
     if not splits["train"]:
         raise SystemExit(f"{args.data}/{args.task} 没有训练数据")
-    if not splits["val"]:
-        print("!! 没有 val 划分（seed%10==8 为 val）")
 
     torch.manual_seed(0)
     rng = np.random.default_rng(0)
@@ -99,29 +119,13 @@ def main() -> int:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.0)
-    print(f"[{args.model}] params={n_params(model)/1e6:.2f}M device={device}")
+    print(f"[{args.model}] params={n_params(model)/1e6:.2f}M device={device}", flush=True)
 
-    env_kwargs = dict(
-        env_name=args.env,
-        pmul=args.pmul,
-        minetest_conf={"ced_goal_min": args.goal_min, "ced_goal_max": args.goal_max},
-    )
-    if args.window:
-        env_kwargs["render_mode"] = "human"
-        # 不给位置时窗口管理器会把窗口放到屏幕外（实测落在 +2200+1154）
-        os.environ.setdefault("SDL_VIDEO_WINDOW_POS", "150,150")
-    env = craftium_env.CraftiumCedEnv(seed=0, **env_kwargs)
-
+    env = craftium_env.CraftiumCedEnv(
+        seed=0, env_name=args.env, pmul=args.pmul,
+        minetest_conf={"ced_goal_min": args.goal_min, "ced_goal_max": args.goal_max})
+    replay = Replay() if args.window else None
     val_seeds = [8 + 10 * i for i in range(args.eval_episodes)]
-
-    def dashboard(step, loss, rows):
-        succ = np.mean([r[0] for r in rows])
-        dec = np.mean([r[1] for r in rows])
-        dist = np.mean([r[2] for r in rows])
-        line = (f"step {step:5d}  loss {loss:.3f}  success {succ:.0%}  "
-                f"decisions {dec:.0f}  final_dist {dist:.2f}")
-        print(line, flush=True)
-        _set_caption(f"{line}   {args.model}/{args.env}")
 
     t0 = time.time()
     losses = []
@@ -130,16 +134,24 @@ def main() -> int:
         obs, act = store.sample_batch(splits["train"], args.batch, WINDOW, rng)
         losses.append(train_step(model, opt, obs, act))
         if step % args.eval_every == 0 or step == args.steps:
-            rows = evaluate(model, env, val_seeds, args.max_decisions,
-                            caption=None if not args.window else f"step {step}")
-            dashboard(step, float(np.mean(losses[-50:])), rows)
+            loss = float(np.mean(losses[-50:]))
+            rows, frames = evaluate(model, env, val_seeds, args.max_decisions,
+                                    record=replay is not None)
             succ = float(np.mean([r[0] for r in rows]))
+            line = (f"step {step:5d}  loss {loss:.3f}  success {succ:.0%}  "
+                    f"decisions {np.mean([r[1] for r in rows]):.0f}  "
+                    f"final_dist {np.mean([r[2] for r in rows]):.2f}")
+            print(line, flush=True)
             if succ > best:
                 best = succ
                 torch.save({"model": model.state_dict(), "name": args.model},
                            os.path.join(out, "best.pt"))
+            if replay is not None:
+                replay.play(frames, f"step {step} loss {loss:.3f} success {succ:.0%}")
 
     print(f"done in {time.time()-t0:.0f}s, best success {best:.0%}, ckpt -> {out}/best.pt")
+    if replay is not None:
+        replay.close()
     env.close()
     return 0
 
