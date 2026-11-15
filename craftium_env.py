@@ -25,38 +25,38 @@ import transport
 from schema_v0 import OFF_SELF, validate_actions, yaw_index_to_rad
 
 ROOT = Path(__file__).resolve().parent
-BUILD_DIR = ROOT / "env" / "build" / "chop-tree"
 MOD_SRC = ROOT / "env" / "lua" / "ced_obs"
 OBS_FILE = "ced_obs.txt"
 
 
-def package_env_dir() -> Path:
+def package_env_dir(env_name: str = "chop-tree") -> Path:
     import craftium
-    return Path(craftium.__file__).resolve().parent / "craftium-envs" / "chop-tree"
+    return Path(craftium.__file__).resolve().parent / "craftium-envs" / env_name
 
 
-def prepare(force: bool = True) -> Path:
-    """从包内环境复制一份可写的 chop-tree，并挂上 ced_obs。"""
-    if BUILD_DIR.exists():
+def prepare(env_name: str = "chop-tree", force: bool = True) -> Path:
+    """从包内环境复制一份可写的环境目录，并挂上 ced_obs。"""
+    build_dir = ROOT / "env" / "build" / env_name
+    if build_dir.exists():
         if not force:
-            return BUILD_DIR
-        shutil.rmtree(BUILD_DIR)
-    shutil.copytree(package_env_dir(), BUILD_DIR)
-    shutil.copytree(MOD_SRC, BUILD_DIR / "mods" / "ced_obs")
+            return build_dir
+        shutil.rmtree(build_dir)
+    shutil.copytree(package_env_dir(env_name), build_dir)
+    shutil.copytree(MOD_SRC, build_dir / "mods" / "ced_obs")
 
-    world_mt = BUILD_DIR / "worlds" / "world" / "world.mt"
+    world_mt = build_dir / "worlds" / "world" / "world.mt"
     lines = world_mt.read_text().splitlines()
     if not any(l.startswith("load_mod_ced_obs") for l in lines):
         lines.append("load_mod_ced_obs = mods/ced_obs")
         world_mt.write_text("\n".join(lines) + "\n")
-    return BUILD_DIR
+    return build_dir
 
 
-def make_env(seed: int | None = None, **kwargs):
-    """构造一个挂了 ced_obs 的 ChopTree 环境（与 Craftium/ChopTree-v0 同参）。"""
+def make_env(seed: int | None = None, env_name: str = "chop-tree", **kwargs):
+    """构造一个挂了 ced_obs 的环境。"""
     from craftium import CraftiumEnv
 
-    env_dir = prepare()
+    env_dir = prepare(env_name)
     params = dict(
         env_dir=str(env_dir),
         obs_width=64,
@@ -64,7 +64,11 @@ def make_env(seed: int | None = None, **kwargs):
         max_timesteps=2000,
         init_frames=200,
         seed=seed,
-        minetest_conf=dict(give_initial_stuff=True, initial_stuff="default:axe_steel"),
+        minetest_conf=dict(give_initial_stuff=True, initial_stuff="default:axe_steel",
+                           # 服务端步长决定客户端上报位置的频率：默认 ~0.09 s 时，
+                           # 观测里的位置每 5–8 个决策才更新一次（动作一直在用旧状态）。
+                           # 0.01 让位置每决策都刷新（0008）。
+                           dedicated_server_step=0.01),
     )
     params.update(kwargs)
     return CraftiumEnv(**params)
@@ -207,7 +211,10 @@ class CraftiumCedEnv:
             "yaw": yaw,
             "pitch": pitch,
         }
-        return frame.obs.copy(), reward, bool(term), bool(trunc), info
+        # 奖励与终止以 ced_obs 帧为准（任务在 Lua 侧算），Craftium 自带的那套只用来
+        # 提前结束（例如玩家死亡）。
+        return (frame.obs.copy(), frame.reward,
+                bool(frame.terminated or term), bool(frame.truncated or trunc), info)
 
     def close(self):
         self.craftium.close()

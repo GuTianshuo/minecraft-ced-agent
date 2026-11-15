@@ -161,6 +161,61 @@ local TICK = 0
 local EPISODE = 0
 local REWARD, TERM, TRUNC = 0, 0, 0
 
+-- ---------------------------------------------------------------- 任务：go_to_point
+-- 目标点由 fixed_map_seed 决定，相对出生点 10–20 格；距离奖励 + 到达终止。
+-- 这块是 L1 的第一个任务，用来把"观测 → 教师 → 分片 → 训练"整条链路跑在有物理的世界里。
+local TASK_ID = 1
+local REACH = 0.8
+local GOAL_MIN = tonumber(core.settings:get("ced_goal_min") or "10") or 10
+local GOAL_MAX = tonumber(core.settings:get("ced_goal_max") or "20") or 20
+local GOAL = nil
+local PREV_DIST = nil
+local INIT_DIST = nil
+local TASK_DONE = false
+
+local function init_task(player)
+    local p = player:get_pos()
+    local seed = tonumber(core.settings:get("fixed_map_seed") or "0") or 0
+    local s = (seed * 1103515245 + 12345) % 2147483648
+    local function rnd()
+        s = (s * 1103515245 + 12345) % 2147483648
+        return s / 2147483648
+    end
+    local ang = rnd() * 2 * math.pi
+    local d = GOAL_MIN + rnd() * (GOAL_MAX - GOAL_MIN)
+    GOAL = {x = p.x + math.cos(ang) * d, z = p.z + math.sin(ang) * d}
+    PREV_DIST = d
+    INIT_DIST = d
+end
+
+local function update_task(player)
+    if not GOAL then return end
+    local p = player:get_pos()
+    local dx, dz = GOAL.x - p.x, GOAL.z - p.z
+    local d = math.sqrt(dx * dx + dz * dz)
+    if PREV_DIST then REWARD = (PREV_DIST - d) end
+    PREV_DIST = d
+    if d < REACH and not TASK_DONE then
+        TASK_DONE = true
+        TERM = 1
+        REWARD = REWARD + 10
+    end
+end
+
+-- 任务段的局部偏移：OBS_DIM - TASK_DIM（0 基），out 表是 1 基
+local OFF_TASK_LOCAL = OBS_DIM - TASK_DIM
+
+local function fill_task(out, p)
+    if not GOAL then return end
+    local dx, dz = GOAL.x - p.x, GOAL.z - p.z
+    local d = math.sqrt(dx * dx + dz * dz)
+    out[OFF_TASK_LOCAL + 1] = TASK_ID
+    out[OFF_TASK_LOCAL + 2] = dx / 32
+    out[OFF_TASK_LOCAL + 3] = dz / 32
+    out[OFF_TASK_LOCAL + 4] = math.min(d, 32) / 32
+    out[OFF_TASK_LOCAL + 5] = INIT_DIST and math.max(0, math.min(1, 1 - d / INIT_DIST)) or 0
+end
+
 -- 任务脚本通过这些函数写奖励与终止；不要在 Python 侧重算
 function ced_obs_set_reward(r) REWARD = r end
 function ced_obs_set_termination() TERM = 1 end
@@ -211,9 +266,13 @@ core.register_globalstep(function(_)
     if not player then return end
     local t0 = core.get_us_time()
     TICK = TICK + 1
+    if not GOAL then init_task(player) end
     apply_look(player)
+    update_task(player)
+    local values = build_obs(player)
+    fill_task(values, player:get_pos())
     local path = core.get_worldpath() .. "/ced_obs.txt"
-    write_obs(path, build_obs(player))
+    write_obs(path, values)
     local dt = (core.get_us_time() - t0) / 1000
     TICK_BUDGET_MS = TICK_BUDGET_MS * 0.98 + dt * 0.02
     if dt > TICK_MAX_MS then TICK_MAX_MS = dt end
