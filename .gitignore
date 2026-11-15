@@ -1,13 +1,19 @@
 # 本地原始记录，不随仓库发布
 minecraft_ced.md
-
 # Python
 __pycache__/
 *.pyc
 .venv/
-
 # 编辑器
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+runs/
+*.pt
+env/build/
+luanti-run-*/
+data_craftium/
+data_room2/
+data_room3/
+data_room/

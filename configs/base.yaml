@@ -1,0 +1,42 @@
+# 训练配置基线。注意：train.py 目前用命令行参数，本文件是"约定的记录"，
+# 等 P1 接分片数据时再接 yaml 加载，避免现在写两套真相。
+
+schema_version: obs-v0.1
+obs_dim: 2568
+
+context:
+  window: 16        # 训练窗口帧数
+  max_ctx: 32       # 推理时最长历史（Transformer/CED 的 max_frames 必须 >= 此值）
+
+train:
+  batch: 16
+  steps: 300
+  lr: 3.0e-4
+  weight_decay: 0.0
+  clip_grad: 1.0
+  amp: false        # 小模型没必要，先关掉减少变量
+
+models:
+  gru: {d: 256, hidden: 256}                      # ~3M，下界参照
+  tf:  {d: 384, layers: 8, heads: 6, max_frames: 32}   # ~18M，主力基线
+  ced: {d: 384, enc_layers: 6, dec_layers: 2, heads: 6, max_frames: 32}  # ~18.6M
+
+data:
+  train_episodes: 400
+  eval_episodes: 20
+  eval_seed: 10000
+
+env:
+  dummy:
+    arena: 8.0
+    max_steps: 200
+    step_size: 0.25
+    reach: 0.8
+
+gates:
+  # 来自规划 v2 第 4.3 节的硬门禁，改动需记入 decisions/
+  teacher_reach_rate: 0.90      # 教师自己都到不了，说明任务或教师有问题
+  gru_bc_min_success: 0.60      # 低于此值：查数据管线，禁止改架构
+  t0_min_success: 0.85
+  t3_min_success: 0.50
+  seed_variance_max: 0.10       # 3 个种子间成功率标准差上限
