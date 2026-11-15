@@ -125,7 +125,7 @@ def main() -> int:
         seed=0, env_name=args.env, pmul=args.pmul,
         minetest_conf={"ced_goal_min": args.goal_min, "ced_goal_max": args.goal_max})
     replay = Replay() if args.window else None
-    val_seeds = [8 + 10 * i for i in range(args.eval_episodes)]
+    val_seeds = [8 + 10 * i for i in range(args.eval_episodes)]  # val：seed % 10 == 8
 
     t0 = time.time()
     losses = []
@@ -137,8 +137,10 @@ def main() -> int:
             loss = float(np.mean(losses[-50:]))
             rows, frames = evaluate(model, env, val_seeds, args.max_decisions,
                                     record=replay is not None)
-            succ = float(np.mean([r[0] for r in rows]))
-            line = (f"step {step:5d}  loss {loss:.3f}  success {succ:.0%}  "
+            succ_arr = np.array([r[0] for r in rows], dtype=float)
+            succ = float(succ_arr.mean())
+            line = (f"step {step:5d}  loss {loss:.3f}  success {succ:.0%}"
+                    f"±{succ_arr.std():.2f}  "
                     f"decisions {np.mean([r[1] for r in rows]):.0f}  "
                     f"final_dist {np.mean([r[2] for r in rows]):.2f}")
             print(line, flush=True)

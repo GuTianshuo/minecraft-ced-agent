@@ -21,7 +21,10 @@ local TASK_DIM = 12
 local OBS_DIM = RAY_GRID * RAY_GRID * RAY_DIM + SELF_DIM
              + N_ENT * ENT_DIM + N_AUDIO * AUDIO_DIM + TASK_DIM
 
-local FOV_HALF = math.rad(35)
+-- 视野：16:9。水平 70°（半角 35°），垂直按 9/16 收窄到约 43.6°。
+-- 之前两个轴都用 35°，是 70°×70° 的正方形，上下被拉宽了近一倍。
+local FOV_H_TAN = math.tan(math.rad(35))
+local FOV_V_TAN = FOV_H_TAN * 9 / 16
 local MAX_DIST = 32
 
 -- 方块类：先用显式表 + 名字哈希兜底，正式版换模糊聚类
@@ -92,7 +95,10 @@ local function ray_block(player, dir, eyewear)
                 local dx, dy_, dz = ip.x - pos.x, ip.y - pos.y, ip.z - pos.z
                 local dist = math.sqrt(dx * dx + dy_ * dy_ + dz * dz)
                 local dist_h = math.sqrt(dx * dx + dz * dz)
-                local light = (core.get_node_light(pt.under) or 0) / 15
+                -- 光照取命中面外侧（空气一侧）：命中方块内部的光恒为 0，
+                -- 对模型没有信息量；面向观察者的那一侧才是"看上去多亮"。
+                local lp = {x = ip.x + n.x * 0.5, y = ip.y + n.y * 0.5, z = ip.z + n.z * 0.5}
+                local light = (core.get_node_light(lp) or 0) / 15
                 return class_of(node.name), n.x, n.y, n.z, dist, dy_, dist_h, light,
                        shape_of(node.name)
             end
@@ -116,7 +122,7 @@ local function build_obs(player)
         for u = 0, RAY_GRID - 1 do
             local su = (u + 0.5) / RAY_GRID * 2 - 1
             local sv = 1 - (v + 0.5) / RAY_GRID * 2
-            local tx, ty = math.tan(FOV_HALF) * su, math.tan(FOV_HALF) * sv
+            local tx, ty = FOV_H_TAN * su, FOV_V_TAN * sv
             local dir = normalize({
                 x = look.x + tx * right.x + ty * cam_up.x,
                 y = look.y + tx * right.y + ty * cam_up.y,
@@ -147,11 +153,42 @@ local function build_obs(player)
     out[idx + 4] = math.cos(yaw)
     out[idx + 5] = math.sin(pitch)
     out[idx + 6] = math.cos(pitch)
-    out[idx + 10] = 1                          -- TODO: 真实 on_ground
-    out[idx + 13] = 1                          -- TODO: health/20
-    out[idx + 14] = 1                          -- TODO: hunger/20
-    out[idx + 17] = 1                          -- TODO: 眼位光照/15
-    -- ents / audio / task 段留 0，由任务脚本填（见 TODO）
+
+    -- 速度：服务端同步的玩家速度（之前恒为 0，模型完全不知道自己在动）
+    local vel = {x = 0, y = 0, z = 0}
+    local ok, v = pcall(player.get_player_velocity, player)
+    if not ok or type(v) ~= "table" then
+        ok, v = pcall(player.get_velocity, player)
+    end
+    if ok and type(v) == "table" then vel = v end
+    out[idx + 7] = vel.x / 32
+    out[idx + 8] = vel.y / 32
+    out[idx + 9] = vel.z / 32
+
+    -- on_ground：脚下 0.1 格是实心方块
+    local below = core.get_node_or_nil({x = p.x, y = p.y - 0.1, z = p.z})
+    local bdef = below and core.registered_nodes[below.name]
+    out[idx + 10] = (bdef and bdef.walkable) and 1 or 0
+
+    -- 潜行 / 冲刺：服务端能拿到玩家的控制位
+    local okc, ctrl = pcall(player.get_player_control, player)
+    if okc and type(ctrl) == "table" then
+        out[idx + 11] = ctrl.sneak and 1 or 0
+        out[idx + 12] = ctrl.aux1 and 1 or 0
+    end
+
+    local okh, hp = pcall(player.get_hp, player)
+    out[idx + 13] = (okh and tonumber(hp)) and hp / 20 or 0
+    -- 饥饿：本环境（minetest_game）没有饥饿系统，保持 0，不假装是满的
+    out[idx + 14] = 0
+
+    local okw, wi = pcall(player.get_wield_index, player)
+    out[idx + 16] = (okw and wi) and (wi - 1) / 8 or 0
+
+    -- 眼位光照：之前硬编码 1（等于满光），现在读真实值
+    local eye_light = core.get_node_light({x = p.x, y = p.y + 1.5, z = p.z})
+    out[idx + 17] = (eye_light or 0) / 15
+    -- ents / audio 段留 0，task 段由 fill_task 填
     return out
 end
 
@@ -168,10 +205,27 @@ local TASK_ID = 1
 local REACH = 0.8
 local GOAL_MIN = tonumber(core.settings:get("ced_goal_min") or "10") or 10
 local GOAL_MAX = tonumber(core.settings:get("ced_goal_max") or "20") or 20
+-- 房间边界（room 环境实测）：目标点必须落在里面，否则教师够不着，
+-- 之前就是没限制，5 个失败的 episode 目标全在墙外。
+local ROOM_XMIN = tonumber(core.settings:get("ced_room_xmin") or "-13.2") or -13.2
+local ROOM_XMAX = tonumber(core.settings:get("ced_room_xmax") or "4.2") or 4.2
+local ROOM_ZMIN = tonumber(core.settings:get("ced_room_zmin") or "-24.2") or -24.2
+local ROOM_ZMAX = tonumber(core.settings:get("ced_room_zmax") or "-0.8") or -0.8
+local MARGIN = REACH + 0.4
 local GOAL = nil
 local PREV_DIST = nil
 local INIT_DIST = nil
 local TASK_DONE = false
+
+-- 目标点所在的两格必须是空气（脚 + 头）
+local function clear_at(gx, gz, y0)
+    for dy = 0, 1 do
+        local n = core.get_node_or_nil({x = gx, y = y0 + dy, z = gz})
+        local def = n and core.registered_nodes[n.name]
+        if not def or def.walkable then return false end
+    end
+    return true
+end
 
 local function init_task(player)
     local p = player:get_pos()
@@ -181,11 +235,27 @@ local function init_task(player)
         s = (s * 1103515245 + 12345) % 2147483648
         return s / 2147483648
     end
-    local ang = rnd() * 2 * math.pi
-    local d = GOAL_MIN + rnd() * (GOAL_MAX - GOAL_MIN)
-    GOAL = {x = p.x + math.cos(ang) * d, z = p.z + math.sin(ang) * d}
-    PREV_DIST = d
-    INIT_DIST = d
+    local y0 = math.floor(p.y) + 1
+    local best = nil
+    for _ = 1, 64 do
+        local ang = rnd() * 2 * math.pi
+        local d = GOAL_MIN + rnd() * (GOAL_MAX - GOAL_MIN)
+        local gx, gz = p.x + math.cos(ang) * d, p.z + math.sin(ang) * d
+        if gx >= ROOM_XMIN + MARGIN and gx <= ROOM_XMAX - MARGIN
+                and gz >= ROOM_ZMIN + MARGIN and gz <= ROOM_ZMAX - MARGIN
+                and clear_at(math.floor(gx) + 0.5, math.floor(gz) + 0.5, y0) then
+            best = {x = gx, z = gz}
+            break
+        end
+    end
+    if not best then
+        local cx = math.max(ROOM_XMIN + MARGIN, math.min(ROOM_XMAX - MARGIN, p.x))
+        local cz = math.max(ROOM_ZMIN + MARGIN, math.min(ROOM_ZMAX - MARGIN, p.z - GOAL_MIN))
+        best = {x = cx, z = cz}
+    end
+    GOAL = best
+    PREV_DIST = math.sqrt((GOAL.x - p.x) ^ 2 + (GOAL.z - p.z) ^ 2)
+    INIT_DIST = PREV_DIST
 end
 
 local function update_task(player)

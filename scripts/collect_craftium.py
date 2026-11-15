@@ -13,12 +13,14 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import math  # noqa: E402
+
 import numpy as np  # noqa: E402
 
 import craftium  # noqa: F401,E402
 import craftium_env  # noqa: E402
 import shards  # noqa: E402
-from schema_v0 import ACTION_NCLASSES  # noqa: E402
+from schema_v0 import ACTION_NCLASSES, OFF_TASK  # noqa: E402
 from teachers import goto_action  # noqa: E402
 
 
@@ -62,8 +64,10 @@ def main() -> int:
         obs_arr, act_arr = np.stack(obs_seq[:-1]), np.stack(act_seq)
         if len(act_arr) < 2:
             continue
+        final_dist = math.hypot(obs[OFF_TASK + 1], obs[OFF_TASK + 2]) * 32
         p = shards.write_episode(args.out, args.task, seed, obs_arr, act_arr, args.policy,
-                                 extra={"reached": bool(term), "frames_per_decision": info["frames"]})
+                                 extra={"reached": bool(term), "final_dist": round(final_dist, 3),
+                                        "frames_per_decision": info["frames"]})
         paths.append(p)
         if args.policy == "teacher" or ep % 10 == 0:
             print(f"episode {ep}: {len(act_arr)} decisions, {info['frames']} frames/decision, "
