@@ -70,7 +70,7 @@ def evaluate(model, task_id: str, make_env, seeds=(0, 1, 2), episodes: int = 20,
     for s in seeds:
         rows = []
         for ep in range(episodes):
-            env = make_env(seed=s * 1000 + ep)
+            env = make_env(s * 1000 + ep)
             rows.append(run_episode(model, env, seed=s * 1000 + ep, max_ctx=max_ctx))
         per_seed[s] = {
             "success_rate": float(np.mean([r.success for r in rows])),
