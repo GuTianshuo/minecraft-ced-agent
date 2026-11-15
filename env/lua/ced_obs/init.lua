@@ -182,23 +182,50 @@ end
 
 local TICK_BUDGET_MS = 0
 local TICK_MAX_MS = 0
+local LOOK_FILE = "look.txt"     -- 每行：<yaw_rad> <pitch_rad>，Python 写，Lua 每 tick 应用
+
+-- 服务端的 look 同步不可靠（pitch 完全不跟进），所以视线由 Python 侧权威指定。
+-- 只在目标值变化时调用 set_look_*：每次调用都会向客户端发一次 MovePlayer，
+-- 客户端按增量叠加，每 tick 都调用会让它的 yaw 无限累加（实测 60 tick → 5156°）。
+local last_yaw, last_pitch = nil, nil
+
+local function apply_look(player)
+    local f = io.open(core.get_worldpath() .. "/" .. LOOK_FILE, "r")
+    if not f then return end
+    local line = f:read("*l")
+    f:close()
+    if not line then return end
+    local yaw, pitch = line:match("([%-%d%.eE]+)%s+([%-%d%.eE]+)")
+    if not yaw then return end
+    yaw, pitch = tonumber(yaw), tonumber(pitch)
+    if last_yaw == nil or math.abs(yaw - last_yaw) > 1e-4
+            or math.abs(pitch - last_pitch) > 1e-4 then
+        player:set_look_horizontal(yaw)
+        player:set_look_vertical(pitch)
+        last_yaw, last_pitch = yaw, pitch
+    end
+end
 
 core.register_globalstep(function(_)
     local player = core.get_connected_players()[1]
     if not player then return end
     local t0 = core.get_us_time()
     TICK = TICK + 1
+    apply_look(player)
     local path = core.get_worldpath() .. "/ced_obs.txt"
     write_obs(path, build_obs(player))
     local dt = (core.get_us_time() - t0) / 1000
     TICK_BUDGET_MS = TICK_BUDGET_MS * 0.98 + dt * 0.02
     if dt > TICK_MAX_MS then TICK_MAX_MS = dt end
-    if TICK % 200 == 0 then
+    if TICK % 20 == 0 then
         -- 每 200 tick 写一次，用来判断射线是否拖慢 tick（EXECUTION S7 的 5ms 门禁）
         local sf = io.open(core.get_worldpath() .. "/ced_obs_stats.txt", "w")
         if sf then
-            sf:write(string.format("tick %d avg_ms %.3f max_ms %.3f\n",
-                                   TICK, TICK_BUDGET_MS, TICK_MAX_MS))
+            local p = player:get_pos()
+            sf:write(string.format(
+                "tick %d avg_ms %.3f max_ms %.3f yaw %.2f pitch %.2f pos %.2f %.2f %.2f\n",
+                TICK, TICK_BUDGET_MS, TICK_MAX_MS,
+                player:get_look_horizontal(), player:get_look_vertical(), p.x, p.y, p.z))
             sf:close()
         end
     end

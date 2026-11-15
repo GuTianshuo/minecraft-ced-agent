@@ -66,6 +66,11 @@ EXECUTION 的 S9 写的是"Lua 每 tick 读 `act.txt`，用 `core.set_player_con
 Craftium 通道保持唯一权威。`docs/protocol.md` 的 `act.txt` 通道在 Craftium 阶段不启用，
 保留给将来自建服务端（那时 Lua 侧施加控制才有意义）。
 
+> 后续修正（见 0005）：实测服务端收不到客户端的 pitch、yaw 也会滞后，只靠鼠标转动时
+> 射线观测对转头完全不敏感。最终的朝向方案是 Python 写 `look.txt`、Lua 用
+> `set_look_horizontal/vertical` 应用；按键仍走 Craftium 的 Dict。即"Python 侧权威"不变，
+> 但鼠标只作为可选的连续转动手段。
+
 这条与 EXECUTION 的写法不一致，**需要你确认**。它不推翻 0001 的四项决策
 （结构化观测、禁像素、参数上限、3 种子），只改变动作的传输路径。
 
