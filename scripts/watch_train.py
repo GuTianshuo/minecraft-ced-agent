@@ -24,7 +24,8 @@ import torch  # noqa: E402
 import craftium  # noqa: F401,E402
 import craftium_env  # noqa: E402
 import shards  # noqa: E402
-from runlib import make_model, policy_actions, train_step, n_params  # noqa: E402
+from runlib import (make_model, policy_actions, train_step, n_params,  # noqa: E402
+                    balanced_weights)
 from schema_v0 import OFF_TASK  # noqa: E402
 
 WINDOW = 16
@@ -94,6 +95,10 @@ def main() -> int:
     ap.add_argument("--goal-max", type=float, default=8.0)
     ap.add_argument("--pmul", type=int, default=20)
     ap.add_argument("--steps", type=int, default=3000)
+    ap.add_argument("--start-bias", type=float, default=0.35,
+                    help="按概率从 episode 开头附近取窗口，否则学不会开局转向")
+    ap.add_argument("--balance-alpha", type=float, default=0.5,
+                    help="类别频率加权指数，0 关闭（不加权时模型会退化成永不转向）")
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--eval-every", type=int, default=500)
@@ -127,12 +132,21 @@ def main() -> int:
     replay = Replay() if args.window else None
     val_seeds = [8 + 10 * i for i in range(args.eval_episodes)]  # val：seed % 10 == 8
 
+    class_weights = None
+    if args.balance_alpha > 0:
+        acts = np.concatenate([shards.read_episode(p)["act"] for p in splits["train"]])
+        class_weights = balanced_weights(acts, args.balance_alpha)
+        print(f"balanced loss on (alpha={args.balance_alpha}); "
+              f"yaw weights: center {class_weights[11][60]:.2f} vs edge {class_weights[11][0]:.2f}",
+              flush=True)
+
     t0 = time.time()
     losses = []
     best = -1.0
     for step in range(1, args.steps + 1):
-        obs, act = store.sample_batch(splits["train"], args.batch, WINDOW, rng)
-        losses.append(train_step(model, opt, obs, act))
+        obs, act = store.sample_batch(splits["train"], args.batch, WINDOW, rng,
+                                      start_bias=args.start_bias)
+        losses.append(train_step(model, opt, obs, act, class_weights=class_weights))
         if step % args.eval_every == 0 or step == args.steps:
             loss = float(np.mean(losses[-50:]))
             rows, frames = evaluate(model, env, val_seeds, args.max_decisions,

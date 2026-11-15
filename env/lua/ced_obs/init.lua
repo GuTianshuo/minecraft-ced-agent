@@ -230,10 +230,18 @@ end
 local function init_task(player)
     local p = player:get_pos()
     local seed = tonumber(core.settings:get("fixed_map_seed") or "0") or 0
-    local s = (seed * 1103515245 + 12345) % 2147483648
+    -- 用 splitmix32 风格的哈希，而不是简单的 LCG：原来的 LCG 相邻种子输出的低比特
+    -- 高度相关，导致 80 条 episode 里有 65 条的目标正好在上一条的反方向。
+    local k = 0
     local function rnd()
-        s = (s * 1103515245 + 12345) % 2147483648
-        return s / 2147483648
+        k = k + 1
+        local x = (seed * 747796405 + k * 2891336453) % 4294967296
+        x = bit.bxor(x, bit.rshift(x, 16))
+        x = (x * 2246822519) % 4294967296
+        x = bit.bxor(x, bit.rshift(x, 13))
+        x = (x * 3266489917) % 4294967296
+        x = bit.bxor(x, bit.rshift(x, 16))
+        return x / 4294967296
     end
     local y0 = math.floor(p.y) + 1
     local best = nil

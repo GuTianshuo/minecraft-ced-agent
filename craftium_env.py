@@ -155,6 +155,9 @@ class CraftiumCedEnv:
     # ---- 公共接口
     def reset(self, seed: int | None = None):
         self.last_pixels, _ = self.craftium.reset(seed=seed)   # 硬重置：服务端进程重启，tick 归零
+        # 出生朝向固定为 0：look.txt 跨 episode 是持久的，不重置的话每条新 episode
+        # 都会面朝上一条的终点方向，开局转向分布因此被路径依赖污染（0009）。
+        self._write_look(0.0, 0.0)
         frame = self.channel.read(after_tick=-1)
         self.episode_id += 1
         self.server_tick_offset = self.logical_tick + 1 - frame.tick

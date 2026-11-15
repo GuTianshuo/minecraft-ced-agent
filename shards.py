@@ -114,7 +114,7 @@ class EpisodeStore:
         return ep
 
     def sample_batch(self, files: list[str], batch: int, window: int,
-                     rng: np.random.Generator):
+                     rng: np.random.Generator, start_bias: float = 0.0):
         import torch
         if not files:
             raise ValueError("empty file list")
@@ -124,7 +124,13 @@ class EpisodeStore:
             obs, act = ep["obs"], ep["act"]
             t = len(act)
             if t >= window:
-                start = int(rng.integers(0, t - window + 1))
+                # start_bias：按概率把窗口起点放在 episode 开头附近。
+                # 每条 episode 的关键转向只发生在最开始 1–2 帧，均匀采样几乎采不到，
+                # 模型因此学不会"刚出生、朝向偏了"这种状态（实测转向样本准确率 0%）。
+                if start_bias > 0 and rng.random() < start_bias:
+                    start = int(rng.integers(0, min(8, t - window + 1)))
+                else:
+                    start = int(rng.integers(0, t - window + 1))
                 obs_b.append(obs[start:start + window])
                 act_b.append(act[start:start + window])
             else:
