@@ -103,6 +103,9 @@ def main():
         losses.append(train_step(model, opt, obs, act))
         if first is None and step == 10:
             first = float(np.mean(losses[-10:]))
+            # 基线取在这里：前 10 步会把 CUDA 上下文与 cublas/cudnn workspace
+            # 一次性分配掉（GRU 约 800MB），它不是泄漏，不能算进增长。
+            rss0 = rss_mb()
         if step % max(1, args.steps // 6) == 0 or step == 1:
             print(f"step {step:4d}  loss {np.mean(losses[-20:]):.4f}  "
                   f"rss {rss_mb():.0f}MB  {time.time()-t0:.1f}s")
