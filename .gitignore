@@ -4,3 +4,4 @@ __pycache__/
 *.pt
 env/build/
 luanti-run-*/
+data_craftium/
